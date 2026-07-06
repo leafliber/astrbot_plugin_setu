@@ -75,25 +75,32 @@ class Main(Star):
             cache_dir=plugin_data / "cache",
         )
 
-        # LLM Tool：在 __init__ 中以闭包方式注册，捕获 self
-        # 不能作为 class 方法用 @filter.llm_tool 装饰——装饰器存储的是未绑定函数，
-        # AstrBot 调用时写 handler(event, **kwargs) 会把 event 填入 self 参数位置。
-        setu_instance = self
+        # LLM Tool：在 __init__ 中以闭包方式注册。
+        # star_manager 会对所有 handler（包括 llm_tool）执行
+        # functools.partial(handler, star_cls) 绑定插件实例，
+        # 因此闭包的首参数 _self 用于接收 star_cls（与 setu_instance 是同一对象）。
+        # _self 不出现在 docstring Args 中，不会被加入 LLM 工具参数 schema。
 
         @filter.llm_tool(name=SETU_TOOL_NAME)
-        async def get_setu(event: AstrMessageEvent, tag: str, num: int, r18: int):
+        async def get_setu(
+            _self,
+            event: AstrMessageEvent,
+            tag: str = "",
+            num: int = 1,
+            r18: int = 0,
+        ):
             '''获取 Pixiv 色图并发送到当前会话。
 
             Args:
-                tag(string): 标签关键词，多个用竖线 | 表示或关系，如 萝莉|少女
-                num(int): 获取数量，1 到 20
-                r18(int): 0 为非 R18，1 为 R18，2 为混合
+                tag(string): 标签关键词，多个用竖线 | 表示或关系，如 萝莉|少女。可选。
+                num(int): 获取数量，1 到 20，默认 1。可选。
+                r18(int): 0 为非 R18，1 为 R18，2 为混合，默认 0。可选。
             '''
-            if not setu_instance.config.tool_enabled:
+            if not _self.config.tool_enabled:
                 yield event.plain_result("色图工具已被禁用。")
                 return
             params = build_params_from_tool_args(tag=tag, num=num, r18=r18)
-            async for result in setu_instance._handle_setu(event, params):
+            async for result in _self._handle_setu(event, params):
                 yield result
 
         # 保存引用便于 terminate 等处访问
