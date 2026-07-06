@@ -27,6 +27,7 @@ API_DEFAULTS: dict[str, Any] = {
     "aspectRatio": "",
     "dateAfter": 0,
     "dateBefore": 0,
+    "show_metadata": False,
 }
 
 NETWORK_DEFAULTS: dict[str, Any] = {
@@ -128,6 +129,10 @@ class SetuConfig:
     @property
     def image_proxy(self) -> str:
         return str(self.api.get("image_proxy", API_DEFAULTS["image_proxy"]))
+
+    @property
+    def show_metadata(self) -> bool:
+        return bool(self.api.get("show_metadata", False))
 
     @property
     def tool_enabled(self) -> bool:

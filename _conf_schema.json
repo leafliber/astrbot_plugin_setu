@@ -80,6 +80,12 @@
         "description": "截止时间戳(ms)",
         "type": "int",
         "default": 0
+      },
+      "show_metadata": {
+        "description": "显示图片元信息",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后会在图片前发送标题、作者、pid、标签等文字信息"
       }
     }
   },

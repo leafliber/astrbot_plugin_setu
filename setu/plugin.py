@@ -63,6 +63,31 @@ class SetuPlugin(Star):
             cache_dir=plugin_data / "cache",
         )
 
+        # LLM Tool：在 __init__ 中以闭包方式注册，捕获 self
+        # 不能作为 class 方法用 @filter.llm_tool 装饰——装饰器存储的是未绑定函数，
+        # AstrBot 调用时写 handler(event, **kwargs) 会把 event 填入 self 参数位置。
+        setu_instance = self
+
+        @filter.llm_tool(name=SETU_TOOL_NAME)
+        async def get_setu(event: AstrMessageEvent, tag: str, num: int, r18: int):
+            '''获取 Pixiv 色图并发送到当前会话。
+
+            Args:
+                tag(string): 标签关键词，多个用竖线 | 表示或关系，如 萝莉|少女
+                num(int): 获取数量，1 到 20
+                r18(int): 0 为非 R18，1 为 R18，2 为混合
+            '''
+            if not setu_instance.config.tool_enabled:
+                yield event.plain_result("色图工具已被禁用。")
+                event.stop_event()
+                return
+            params = build_params_from_tool_args(tag=tag, num=num, r18=r18)
+            async for result in setu_instance._handle_setu(event, params):
+                yield result
+
+        # 保存引用便于 terminate 等处访问
+        self.get_setu = get_setu
+
         logger.info(
             "%s 已加载：触发词=%s, 镜像站=%s, 代理=%s, 缓存=%s",
             PLUGIN_NAME,
@@ -120,7 +145,7 @@ class SetuPlugin(Star):
         event.stop_event()
 
     async def _build_chain(self, item: Mapping[str, Any], size: str) -> list | None:
-        """为一条 setu 构造消息链：元信息文本 + 图片。"""
+        """为一条 setu 构造图片消息段（默认纯图片，可选附带元信息文本）。"""
         url = SetuApiClient.pick_url(item)
         image_comp = None
 
@@ -137,7 +162,10 @@ class SetuPlugin(Star):
                 return None
             image_comp = Comp.Image.fromURL(url)
 
-        return [Comp.Plain(self._format_meta(item)), image_comp]
+        # 默认只发图片；show_metadata 开启时附带文字元信息
+        if self.config.show_metadata:
+            return [Comp.Plain(self._format_meta(item)), image_comp]
+        return [image_comp]
 
     @staticmethod
     def _format_meta(item: Mapping[str, Any]) -> str:
@@ -174,33 +202,6 @@ class SetuPlugin(Star):
         _word, rest = matched
         parsed = Trigger.parse_args(rest)
         params = parsed.to_api_params()
-        async for result in self._handle_setu(event, params):
-            yield result
-
-    # ------------------------------------------------------------------
-    # 入口二：LLM Tool（注册给大模型按需调用）
-    # ------------------------------------------------------------------
-
-    @filter.llm_tool(name=SETU_TOOL_NAME)
-    async def get_setu(
-        self,
-        event: AstrMessageEvent,
-        tag: str,
-        num: int,
-        r18: int,
-    ) -> AsyncIterator:
-        """获取 Pixiv 色图并发送到当前会话。
-
-        Args:
-            tag(string): 标签关键词，多个用竖线 | 表示或关系，如 萝莉|少女
-            num(int): 获取数量，1 到 20
-            r18(int): 0 为非 R18，1 为 R18，2 为混合
-        """
-        if not self.config.tool_enabled:
-            yield event.plain_result("色图工具已被禁用。")
-            event.stop_event()
-            return
-        params = build_params_from_tool_args(tag=tag, num=num, r18=r18)
         async for result in self._handle_setu(event, params):
             yield result
 

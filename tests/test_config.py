@@ -71,6 +71,11 @@ class TestSetuConfig:
         assert custom_config.base_url == "https://mirror.example.com/setu/v2"
         assert custom_config.image_proxy == "i.example.re"
 
+    def test_show_metadata_property(self, base_config, custom_config):
+        assert base_config.show_metadata is False
+        cfg = SetuConfig.from_raw({"api": {"show_metadata": True}})
+        assert cfg.show_metadata is True
+
     def test_non_mapping_section_ignored(self):
         """分组值非 dict 时回退全部默认值，不应抛错。"""
         cfg = SetuConfig.from_raw({"api": "not-a-dict"})
