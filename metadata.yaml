@@ -1,0 +1,8 @@
+name: astrbot_plugin_setu
+desc: 获取动漫图插件，支持触发词/LLM工具、参数调整、分会话开关限流、本地缓存、代理与镜像站切换
+version: 1.0.0
+author: Leafiber
+repo: https://github.com/leafliber/astrbot_plugin_setu
+display_name: 色图插件
+short_desc: 基于 Lolicon API 的色图插件
+astrbot_version: ">=4.9.2"

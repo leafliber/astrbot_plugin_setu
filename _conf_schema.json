@@ -1,0 +1,171 @@
+{
+  "trigger_words": {
+    "description": "触发词列表",
+    "type": "list",
+    "default": ["色图", "来点色图", "setu"],
+    "hint": "发送以这些词开头的消息即可触发，无需指令前缀"
+  },
+  "api": {
+    "description": "API 设置",
+    "type": "object",
+    "items": {
+      "base_url": {
+        "description": "API 地址（镜像站）",
+        "type": "string",
+        "default": "https://api.lolicon.app/setu/v2",
+        "hint": "可替换为镜像站的完整地址"
+      },
+      "r18": {
+        "description": "R18 等级",
+        "type": "int",
+        "default": 0,
+        "options": [0, 1, 2],
+        "hint": "0 非 R18 / 1 R18 / 2 混合"
+      },
+      "num": {
+        "description": "返回数量",
+        "type": "int",
+        "default": 1,
+        "hint": "1 到 20"
+      },
+      "size": {
+        "description": "图片规格",
+        "type": "list",
+        "default": ["original"],
+        "hint": "可选 original/regular/small/thumb/mini"
+      },
+      "image_proxy": {
+        "description": "图片反代域名",
+        "type": "string",
+        "default": "i.pixiv.re",
+        "hint": "对应 API 的 proxy 参数；留空返回 i.pximg.net 原始地址"
+      },
+      "keyword": {
+        "description": "默认关键字",
+        "type": "string",
+        "default": ""
+      },
+      "tag": {
+        "description": "默认标签",
+        "type": "list",
+        "default": []
+      },
+      "uid": {
+        "description": "指定作者 uid",
+        "type": "list",
+        "default": []
+      },
+      "excludeAI": {
+        "description": "排除 AI 作品",
+        "type": "bool",
+        "default": false
+      },
+      "dsc": {
+        "description": "禁用缩写转换",
+        "type": "bool",
+        "default": false
+      },
+      "aspectRatio": {
+        "description": "长宽比筛选",
+        "type": "string",
+        "default": "",
+        "hint": "如 lt1(竖图) gt1(横图) eq1(正方) gt1.7lt1.8"
+      },
+      "dateAfter": {
+        "description": "起始时间戳(ms)",
+        "type": "int",
+        "default": 0
+      },
+      "dateBefore": {
+        "description": "截止时间戳(ms)",
+        "type": "int",
+        "default": 0
+      }
+    }
+  },
+  "network": {
+    "description": "网络设置",
+    "type": "object",
+    "items": {
+      "http_proxy": {
+        "description": "HTTP 代理",
+        "type": "string",
+        "default": "",
+        "hint": "请求 API 与下载图片时使用，如 http://127.0.0.1:7890"
+      },
+      "timeout": {
+        "description": "请求超时(秒)",
+        "type": "int",
+        "default": 15
+      }
+    }
+  },
+  "cache": {
+    "description": "图片缓存",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用本地缓存",
+        "type": "bool",
+        "default": true
+      },
+      "max_count": {
+        "description": "最大缓存数量",
+        "type": "int",
+        "default": 500,
+        "hint": "超出时按 LRU 清理最旧文件"
+      },
+      "ttl_hours": {
+        "description": "缓存有效期(小时)",
+        "type": "int",
+        "default": 168,
+        "hint": "0 表示永不失效"
+      }
+    }
+  },
+  "rate_limit": {
+    "description": "限流",
+    "type": "object",
+    "items": {
+      "global_per_minute": {
+        "description": "全局每分钟上限",
+        "type": "int",
+        "default": 30
+      },
+      "umo_per_minute": {
+        "description": "分会话每分钟上限",
+        "type": "int",
+        "default": 5
+      }
+    }
+  },
+  "session": {
+    "description": "会话开关",
+    "type": "object",
+    "items": {
+      "default_enabled": {
+        "description": "默认开启",
+        "type": "bool",
+        "default": true,
+        "hint": "未显式开关的会话以此值为准"
+      },
+      "admin_only_toggle": {
+        "description": "仅管理员可开关",
+        "type": "bool",
+        "default": true
+      }
+    }
+  },
+  "tool": {
+    "description": "LLM 工具",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用 LLM 工具",
+        "type": "bool",
+        "default": true,
+        "hint": "关闭后大模型无法调用 get_setu 工具"
+      }
+    }
+  }
+}
