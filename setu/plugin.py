@@ -8,13 +8,14 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
+from pathlib import Path
 from typing import Any
 
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
-from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
 from .api_client import ApiError, SetuApiClient
 from .config import SetuConfig
@@ -55,7 +56,8 @@ class SetuPlugin(Star):
         self.api_client = SetuApiClient(self.config)
 
         # 图片缓存目录：data/plugin_data/astrbot_plugin_setu/cache/
-        plugin_data = get_astrbot_data_path() / "plugin_data" / PLUGIN_NAME
+        # 注意 get_astrbot_plugin_data_path() 返回 str，需用 Path 包装
+        plugin_data = Path(get_astrbot_plugin_data_path()) / PLUGIN_NAME
         self.image_cache = ImageCache(
             self.config,
             cache_dir=plugin_data / "cache",
