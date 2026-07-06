@@ -25,7 +25,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 from .setu.api_client import ApiError, SetuApiClient
 from .setu.config import SetuConfig
 from .setu.image_cache import ImageCache
-from .setu.rate_limiter import RateLimiter
+from .setu.rate_limiter import LimitRule, RateLimiter, parse_window
 from .setu.session_manager import SessionManager
 from .setu.tools import SETU_TOOL_NAME, build_params_from_tool_args
 from .setu.trigger import Trigger
@@ -51,10 +51,10 @@ class Main(Star):
         # 触发词匹配器
         self.trigger = Trigger(self.config.trigger_words)
 
-        # 限流器：全局 + 分会话滑动窗口
+        # 限流器：多时间维度滑动窗口（全局 + 分会话默认 + 分会话自定义）
         self.rate_limiter = RateLimiter(
-            global_per_minute=int(self.config.rate_limit.get("global_per_minute", 30)),
-            umo_per_minute=int(self.config.rate_limit.get("umo_per_minute", 5)),
+            global_rules=self.config.global_limit_rules,
+            umo_default_rules=self.config.umo_default_limit_rules,
         )
 
         # 会话开关状态：基于 AstrBot KV 存储
@@ -114,6 +114,41 @@ class Main(Star):
             self.config.http_proxy or "无",
             "开启" if self.config.cache_enabled else "关闭",
         )
+
+    async def initialize(self) -> None:
+        """插件激活后从 KV 加载已持久化的分会话自定义限流规则。"""
+        await self._load_custom_limit_rules()
+
+    # ------------------------------------------------------------------
+    # KV 持久化：分会话自定义限流规则
+    # ------------------------------------------------------------------
+
+    _LIMIT_KV_KEY = "setu_custom_limits"
+
+    async def _load_custom_limit_rules(self) -> None:
+        """从 KV 加载全部自定义限流规则到内存。"""
+        data = await self.get_kv_data(self._LIMIT_KV_KEY, {})
+        if not isinstance(data, dict):
+            return
+        for umo, rules_data in data.items():
+            if not isinstance(rules_data, list):
+                continue
+            rules = []
+            for d in rules_data:
+                if isinstance(d, dict):
+                    try:
+                        rules.append(LimitRule.from_dict(d))
+                    except (ValueError, KeyError, TypeError):
+                        pass
+            if rules:
+                self.rate_limiter.set_umo_custom_rules(umo, rules)
+        if data:
+            logger.info("%s 已加载 %d 个会话的自定义限流规则", PLUGIN_NAME, len(data))
+
+    async def _save_custom_limit_rules(self) -> None:
+        """将全部自定义限流规则持久化到 KV。"""
+        data = self.rate_limiter.get_all_custom_rules_for_persist()
+        await self.put_kv_data(self._LIMIT_KV_KEY, data)
 
     # ------------------------------------------------------------------
     # 核心流程：会话检查 → 限流 → 请求 → 缓存 → 发送
@@ -232,7 +267,7 @@ class Main(Star):
             yield result
 
     # ------------------------------------------------------------------
-    # 入口二：管理员指令 /setu on|off|status|cache
+    # 入口二：管理员指令 /setu on|off|status|limit|cache
     # ------------------------------------------------------------------
 
     @filter.command_group("setu")
@@ -263,15 +298,108 @@ class Main(Star):
         """查看当前会话状态与限流余量。"""
         umo = event.unified_msg_origin
         enabled = await self.session_manager.is_enabled(umo)
-        used, cap = self.rate_limiter.umo_status(umo)
-        g_used, g_cap = self.rate_limiter.global_status()
+        g_windows = self.rate_limiter.global_status()
+        umo_windows = self.rate_limiter.umo_status(umo)
         cache = self.image_cache.stats() if self.config.cache_enabled else {"count": 0}
-        yield event.plain_result(
-            f"本会话色图功能：{'开启' if enabled else '关闭'}\n"
-            f"分会话限流：{used}/{cap} 次/分钟\n"
-            f"全局限流：{g_used}/{g_cap} 次/分钟\n"
-            f"缓存图片数：{cache.get('count', 0)}"
-        )
+
+        lines = [f"本会话色图功能：{'开启' if enabled else '关闭'}"]
+        if g_windows:
+            lines.append("全局限流：" + ", ".join(str(w) for w in g_windows))
+        if umo_windows:
+            lines.append("分会话限流：" + ", ".join(str(w) for w in umo_windows))
+        lines.append(f"缓存图片数：{cache.get('count', 0)}")
+        yield event.plain_result("\n".join(lines))
+
+    @setu_admin.command("limit")
+    async def setu_limit(
+        self,
+        event: AstrMessageEvent,
+        action: str = "",
+        window: str = "",
+        max_count: int = 0,
+    ) -> AsyncIterator:
+        """管理本会话的自定义限流规则。
+
+        用法：
+          /setu limit              查看当前所有限流规则
+          /setu limit add 12h 3    添加规则：12小时最多3张
+          /setu limit del 12h      删除指定窗口的规则
+          /setu limit reset        清空全部自定义规则
+
+        时间窗口格式：30s/5m/12h/7d（秒/分/时/天）
+        """
+        if not await self._check_admin(event):
+            return
+        umo = event.unified_msg_origin
+
+        if action in ("", "list"):
+            # 查看全部规则
+            g_windows = self.rate_limiter.global_status()
+            umo_windows = self.rate_limiter.umo_status(umo)
+            customs = self.rate_limiter.get_umo_custom_rules(umo)
+            lines = ["=== 限流规则 ==="]
+            if g_windows:
+                lines.append("全局：" + ", ".join(str(w) for w in g_windows))
+            if umo_windows:
+                lines.append("本会话：" + ", ".join(str(w) for w in umo_windows))
+            if customs:
+                lines.append(
+                    "自定义规则："
+                    + ", ".join(f"{r.label}:{r.max_count}" for r in customs),
+                )
+            else:
+                lines.append("自定义规则：无")
+            lines.append("")
+            lines.append("用法：/setu limit add <窗口> <数量> | del <窗口> | reset")
+            yield event.plain_result("\n".join(lines))
+
+        elif action == "add":
+            if not window or max_count <= 0:
+                yield event.plain_result(
+                    "用法：/setu limit add <窗口> <数量>\n"
+                    "示例：/setu limit add 12h 3（12小时最多3张）\n"
+                    "窗口格式：30s/5m/12h/7d",
+                )
+                return
+            try:
+                rule = LimitRule(
+                    window_seconds=parse_window(window),
+                    max_count=max_count,
+                )
+            except ValueError as exc:
+                yield event.plain_result(str(exc))
+                return
+            self.rate_limiter.add_umo_rule(umo, rule)
+            await self._save_custom_limit_rules()
+            yield event.plain_result(
+                f"已添加限流规则：{rule.label} 最多 {rule.max_count} 张",
+            )
+
+        elif action == "del":
+            if not window:
+                yield event.plain_result("用法：/setu limit del <窗口>\n如 /setu limit del 12h")
+                return
+            try:
+                window_sec = parse_window(window)
+            except ValueError as exc:
+                yield event.plain_result(str(exc))
+                return
+            if self.rate_limiter.remove_umo_rule(umo, window_sec):
+                await self._save_custom_limit_rules()
+                yield event.plain_result(f"已删除 {window} 窗口的限流规则")
+            else:
+                yield event.plain_result(f"未找到 {window} 窗口的自定义规则")
+
+        elif action == "reset":
+            count = self.rate_limiter.clear_umo_rules(umo)
+            await self._save_custom_limit_rules()
+            yield event.plain_result(f"已清空 {count} 条自定义限流规则")
+
+        else:
+            yield event.plain_result(
+                "未知操作。可用：list / add / del / reset\n"
+                "示例：/setu limit add 12h 3",
+            )
 
     @setu_admin.command("cache")
     async def setu_cache(self, event: AstrMessageEvent) -> AsyncIterator:

@@ -11,6 +11,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from .rate_limiter import LimitRule, parse_window
+
 # ---- 各分组默认值 ----
 
 API_DEFAULTS: dict[str, Any] = {
@@ -44,6 +46,8 @@ CACHE_DEFAULTS: dict[str, Any] = {
 RATE_LIMIT_DEFAULTS: dict[str, Any] = {
     "global_per_minute": 30,
     "umo_per_minute": 5,
+    "global_rules": "",
+    "umo_rules": "",
 }
 
 SESSION_DEFAULTS: dict[str, Any] = {
@@ -66,6 +70,33 @@ def _merge(group: str, defaults: dict[str, Any], raw: Mapping[str, Any]) -> dict
         if key in section and section[key] is not None:
             merged[key] = section[key]
     return merged
+
+
+def _parse_rules_str(s: str, per_minute_fallback: int) -> list[LimitRule]:
+    """解析规则字符串为 LimitRule 列表。
+
+    格式：``1h:200,1d:1000``（逗号分隔，窗口:数量）。
+    始终包含 per_minute_fallback 转换的 1m 规则作为基线。
+    """
+    rules: list[LimitRule] = [LimitRule(window_seconds=60.0, max_count=per_minute_fallback)]
+    s = (s or "").strip()
+    if not s:
+        return rules
+    for part in s.split(","):
+        part = part.strip()
+        if not part or ":" not in part:
+            continue
+        window_str, _, max_str = part.partition(":")
+        try:
+            window_sec = parse_window(window_str.strip())
+            max_count = int(max_str.strip())
+            if max_count > 0 and window_sec > 0:
+                # 避免与 1m 基线重复
+                if window_sec != 60.0:
+                    rules.append(LimitRule(window_seconds=window_sec, max_count=max_count))
+        except (ValueError, TypeError):
+            continue
+    return rules
 
 
 @dataclass
@@ -137,3 +168,15 @@ class SetuConfig:
     @property
     def tool_enabled(self) -> bool:
         return bool(self.tool.get("enabled", True))
+
+    @property
+    def global_limit_rules(self) -> list[LimitRule]:
+        """全局限流规则列表（含 per_minute 基线 + 配置的额外窗口）。"""
+        gpm = int(self.rate_limit.get("global_per_minute", 30))
+        return _parse_rules_str(str(self.rate_limit.get("global_rules", "")), gpm)
+
+    @property
+    def umo_default_limit_rules(self) -> list[LimitRule]:
+        """分会话默认限流规则列表。"""
+        upm = int(self.rate_limit.get("umo_per_minute", 5))
+        return _parse_rules_str(str(self.rate_limit.get("umo_rules", "")), upm)

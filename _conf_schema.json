@@ -142,6 +142,18 @@
         "description": "分会话每分钟上限",
         "type": "int",
         "default": 5
+      },
+      "global_rules": {
+        "description": "全局额外限流规则",
+        "type": "string",
+        "default": "",
+        "hint": "逗号分隔，格式 窗口:数量，如 1h:200,1d:1000。留空则仅使用每分钟上限"
+      },
+      "umo_rules": {
+        "description": "分会话默认额外限流规则",
+        "type": "string",
+        "default": "",
+        "hint": "逗号分隔，格式 窗口:数量，如 1h:30,1d:100。留空则仅使用每分钟上限"
       }
     }
   },

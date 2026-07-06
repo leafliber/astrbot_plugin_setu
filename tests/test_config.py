@@ -80,3 +80,70 @@ class TestSetuConfig:
         """分组值非 dict 时回退全部默认值，不应抛错。"""
         cfg = SetuConfig.from_raw({"api": "not-a-dict"})
         assert cfg.api["r18"] == 0
+
+    def test_global_limit_rules_default(self, base_config):
+        """默认只有 1m 基线规则。"""
+        rules = base_config.global_limit_rules
+        assert len(rules) == 1
+        assert rules[0].window_seconds == 60.0
+        assert rules[0].max_count == 30
+
+    def test_umo_default_limit_rules_default(self, base_config):
+        rules = base_config.umo_default_limit_rules
+        assert len(rules) == 1
+        assert rules[0].max_count == 5
+
+    def test_global_limit_rules_with_extra(self):
+        cfg = SetuConfig.from_raw({
+            "rate_limit": {
+                "global_per_minute": 10,
+                "global_rules": "1h:200,1d:1000",
+            }
+        })
+        rules = cfg.global_limit_rules
+        labels = {r.label for r in rules}
+        assert "1m" in labels
+        assert "1h" in labels
+        assert "1d" in labels
+        r_1h = next(r for r in rules if r.label == "1h")
+        assert r_1h.max_count == 200
+
+    def test_umo_default_limit_rules_with_extra(self):
+        cfg = SetuConfig.from_raw({
+            "rate_limit": {
+                "umo_per_minute": 3,
+                "umo_rules": "12h:20",
+            }
+        })
+        rules = cfg.umo_default_limit_rules
+        labels = {r.label for r in rules}
+        assert "1m" in labels
+        assert "12h" in labels
+
+    def test_rules_invalid_entries_ignored(self):
+        """无效规则条目被忽略，不影响有效条目。"""
+        cfg = SetuConfig.from_raw({
+            "rate_limit": {
+                "global_per_minute": 10,
+                "global_rules": "1h:200,abc,5x:10,1d:500",
+            }
+        })
+        rules = cfg.global_limit_rules
+        labels = {r.label for r in rules}
+        assert "1m" in labels
+        assert "1h" in labels
+        assert "1d" in labels
+        assert "abc" not in labels
+
+    def test_rules_dedup_with_1m(self):
+        """1h:30 不与 1m 重复。"""
+        cfg = SetuConfig.from_raw({
+            "rate_limit": {
+                "global_per_minute": 10,
+                "global_rules": "1m:5,1h:200",
+            }
+        })
+        rules = cfg.global_limit_rules
+        # 1m 来自 global_rules 的会被忽略（因为 60s == 60.0 重复）
+        # 基线 1m:10 保留，额外 1h:200 保留
+        assert len(rules) == 2
