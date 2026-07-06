@@ -79,7 +79,6 @@ class SetuPlugin(Star):
             '''
             if not setu_instance.config.tool_enabled:
                 yield event.plain_result("色图工具已被禁用。")
-                event.stop_event()
                 return
             params = build_params_from_tool_args(tag=tag, num=num, r18=r18)
             async for result in setu_instance._handle_setu(event, params):
@@ -112,14 +111,12 @@ class SetuPlugin(Star):
         # 1) 会话开关
         if not await self.session_manager.is_enabled(umo):
             yield event.plain_result("本会话未开启色图功能，可使用 /setu on 开启。")
-            event.stop_event()
             return
 
         # 2) 限流
         rl = self.rate_limiter.check(umo)
         if not rl.allowed:
             yield event.plain_result(rl.reason)
-            event.stop_event()
             return
 
         # 3) 请求 API
@@ -127,12 +124,10 @@ class SetuPlugin(Star):
             data = await self.api_client.fetch(params)
         except ApiError as exc:
             yield event.plain_result(f"获取图片失败：{exc}")
-            event.stop_event()
             return
 
         if not data:
             yield event.plain_result("没有找到符合条件的图片。")
-            event.stop_event()
             return
 
         # 4) 逐条发送（命中缓存走本地，否则走 URL）
@@ -142,7 +137,6 @@ class SetuPlugin(Star):
             if chain is None:
                 continue
             yield event.chain_result(chain)
-        event.stop_event()
 
     async def _build_chain(self, item: Mapping[str, Any], size: str) -> list | None:
         """为一条 setu 构造图片消息段（默认纯图片，可选附带元信息文本）。"""
@@ -222,7 +216,6 @@ class SetuPlugin(Star):
         umo = event.unified_msg_origin
         await self.session_manager.set_enabled(umo, True)
         yield event.plain_result("已开启本会话的色图功能。")
-        event.stop_event()
 
     @setu_admin.command("off")
     async def setu_off(self, event: AstrMessageEvent) -> AsyncIterator:
@@ -232,7 +225,6 @@ class SetuPlugin(Star):
         umo = event.unified_msg_origin
         await self.session_manager.set_enabled(umo, False)
         yield event.plain_result("已关闭本会话的色图功能。")
-        event.stop_event()
 
     @setu_admin.command("status")
     async def setu_status(self, event: AstrMessageEvent) -> AsyncIterator:
@@ -248,7 +240,6 @@ class SetuPlugin(Star):
             f"全局限流：{g_used}/{g_cap} 次/分钟\n"
             f"缓存图片数：{cache.get('count', 0)}"
         )
-        event.stop_event()
 
     @setu_admin.command("cache")
     async def setu_cache(self, event: AstrMessageEvent) -> AsyncIterator:
@@ -259,7 +250,6 @@ class SetuPlugin(Star):
         if self.config.cache_enabled:
             count = self._clear_cache()
         yield event.plain_result(f"已清理 {count} 张缓存图片。")
-        event.stop_event()
 
     async def _check_admin(self, event: AstrMessageEvent) -> bool:
         """根据 admin_only_toggle 配置校验管理员权限。返回是否允许继续。"""
@@ -268,7 +258,6 @@ class SetuPlugin(Star):
         if event.is_admin():
             return True
         await event.send(event.plain_result("仅管理员可执行此操作。"))
-        event.stop_event()
         return False
 
     def _clear_cache(self) -> int:
