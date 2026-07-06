@@ -151,22 +151,35 @@ class Main(Star):
             yield event.chain_result(chain)
 
     async def _build_chain(self, item: Mapping[str, Any], size: str) -> list | None:
-        """为一条 setu 构造图片消息段（默认纯图片，可选附带元信息文本）。"""
+        """为一条 setu 构造图片消息段（默认纯图片，可选附带元信息文本）。
+
+        所有图片均由 image_cache 的 httpx 客户端下载（携带 Referer 头绕过
+        Pixiv 防盗链），绝不使用 Comp.Image.fromURL（AstrBot 内置下载器
+        不发送 Referer，遇到 i.pximg.net 会 403）。
+        """
         url = SetuApiClient.pick_url(item)
         image_comp = None
 
+        # 路径一：缓存启用时优先走缓存（命中或下载后存入缓存）
         if self.config.cache_enabled:
             local = await self.image_cache.get_local_path(item, size)
             if local:
                 try:
                     image_comp = Comp.Image.fromFileSystem(local)
-                except Exception:  # noqa: BLE001 - 本地图异常时回退 URL
+                except Exception:  # noqa: BLE001 - 本地图异常时回退临时下载
+                    image_comp = None
+
+        # 路径二：缓存禁用或缓存失败，下载到临时文件
+        if image_comp is None and url:
+            temp_path = await self.image_cache.download_to_temp(url)
+            if temp_path:
+                try:
+                    image_comp = Comp.Image.fromFileSystem(temp_path)
+                except Exception:  # noqa: BLE001
                     image_comp = None
 
         if image_comp is None:
-            if not url:
-                return None
-            image_comp = Comp.Image.fromURL(url)
+            return None
 
         # 默认只发图片；show_metadata 开启时附带文字元信息
         if self.config.show_metadata:

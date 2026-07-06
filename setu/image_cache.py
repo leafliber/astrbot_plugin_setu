@@ -5,6 +5,11 @@
 命中缓存时直接返回本地路径，由 ``Comp.Image.fromFileSystem`` 发送，
 避免重复远端请求并绕过 Pixiv 防盗链。
 LRU + TTL 清理策略。
+
+所有图片下载均由本模块的 httpx 客户端执行，统一携带 ``Referer: https://www.pixiv.net/``
+请求头以绕过 Pixiv 图床防盗链（403）。即使缓存禁用，也通过 :meth:`download_to_temp`
+下载到临时文件后以 ``Comp.Image.fromFileSystem`` 发送，绝不使用 ``Comp.Image.fromURL``
+（后者委托 AstrBot 内置下载器，不发送 Referer，遇到 i.pximg.net 会 403）。
 """
 
 from __future__ import annotations
@@ -17,6 +22,17 @@ from typing import Any
 import httpx
 
 from .config import SetuConfig
+
+# Pixiv 图床防盗链要求的 Referer
+PIXIV_REFERER = "https://www.pixiv.net/"
+# 模拟浏览器 UA，部分 CDN 可能拒绝无 UA 请求
+DEFAULT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+# 临时文件保留上限
+MAX_TEMP_FILES = 50
 
 
 class ImageCache:
@@ -42,6 +58,10 @@ class ImageCache:
                 proxy=self.config.http_proxy,
                 timeout=self.config.timeout,
                 follow_redirects=True,
+                headers={
+                    "Referer": PIXIV_REFERER,
+                    "User-Agent": DEFAULT_UA,
+                },
             )
         return self._client
 
@@ -85,6 +105,22 @@ class ImageCache:
         self._access_times[fpath.name] = time.time()
         await self._maybe_cleanup()
         return str(fpath)
+
+    async def download_to_temp(self, url: str) -> str:
+        """下载图片到临时文件（不经缓存），返回路径。失败返回空串。
+
+        用于缓存禁用或缓存下载失败时的回退路径。临时文件以 ``tmp_`` 前缀
+        存放于缓存目录，由 :meth:`_cleanup_temp` 定期清理。
+        """
+        if not url:
+            return ""
+        ext = _guess_ext(url)
+        tmp = self.cache_dir / f"tmp_{int(time.time() * 1000)}.{ext}"
+        ok = await self._download(url, tmp)
+        if not ok:
+            return ""
+        await self._cleanup_temp()
+        return str(tmp)
 
     @staticmethod
     def _extract_url(item: Mapping[str, Any], size: str) -> str:
@@ -137,3 +173,31 @@ class ImageCache:
         files = [f for f in self.cache_dir.iterdir() if f.is_file()]
         total = sum(f.stat().st_size for f in files)
         return {"count": len(files), "total_bytes": total}
+
+    async def _cleanup_temp(self) -> None:
+        """清理临时文件，保留最近 MAX_TEMP_FILES 个。"""
+        tmp_files = [
+            f for f in self.cache_dir.iterdir()
+            if f.is_file() and f.name.startswith("tmp_")
+        ]
+        if len(tmp_files) <= MAX_TEMP_FILES:
+            return
+        tmp_files.sort(key=lambda f: f.stat().st_mtime)
+        for f in tmp_files[:-MAX_TEMP_FILES]:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+
+_VALID_EXTS = {"jpg", "jpeg", "png", "gif", "webp"}
+
+
+def _guess_ext(url: str) -> str:
+    """从 URL 推断图片扩展名，无法识别时返回 jpg。"""
+    path = url.split("?")[0].rsplit("/", 1)[-1]
+    if "." in path:
+        ext = path.rsplit(".", 1)[-1].lower()
+        if ext in _VALID_EXTS:
+            return ext
+    return "jpg"

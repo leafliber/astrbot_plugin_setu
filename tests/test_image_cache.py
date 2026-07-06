@@ -136,3 +136,82 @@ class TestImageCache:
         respx.get("https://x/r.jpg").mock(return_value=httpx.Response(200, content=b"data"))
         path = await cache.get_local_path(item, "original")
         assert Path(path).read_bytes() == b"data"
+
+    @respx.mock
+    async def test_download_to_temp_basic(self, tmp_path: Path):
+        """download_to_temp 下载到临时文件并返回路径。"""
+        cfg = make_config()
+        cache = ImageCache(cfg, cache_dir=tmp_path / "cache")
+        respx.get("https://i.pximg.net/img/1.png").mock(
+            return_value=httpx.Response(200, content=b"\x89PNGfake")
+        )
+        path = await cache.download_to_temp("https://i.pximg.net/img/1.png")
+        assert path
+        assert Path(path).exists()
+        assert Path(path).read_bytes() == b"\x89PNGfake"
+        assert Path(path).name.startswith("tmp_")
+        assert Path(path).suffix == ".png"
+
+    @respx.mock
+    async def test_download_to_temp_sends_referer(self, tmp_path: Path):
+        """下载请求必须携带 Referer: https://www.pixiv.net/ 头。"""
+        cfg = make_config()
+        cache = ImageCache(cfg, cache_dir=tmp_path / "cache")
+        captured_headers = {}
+
+        def handler(request):
+            captured_headers.update(request.headers)
+            return httpx.Response(200, content=b"ok")
+
+        respx.get("https://i.pximg.net/x.jpg").mock(side_effect=handler)
+        await cache.download_to_temp("https://i.pximg.net/x.jpg")
+        assert captured_headers.get("referer") == "https://www.pixiv.net/"
+        assert "user-agent" in {k.lower() for k in captured_headers}
+
+    @respx.mock
+    async def test_download_to_temp_failure(self, tmp_path: Path):
+        """下载失败返回空串。"""
+        cfg = make_config()
+        cache = ImageCache(cfg, cache_dir=tmp_path / "cache")
+        respx.get("https://x/y.jpg").mock(return_value=httpx.Response(403))
+        path = await cache.download_to_temp("https://x/y.jpg")
+        assert path == ""
+
+    async def test_download_to_temp_empty_url(self, tmp_path: Path):
+        """空 URL 返回空串。"""
+        cfg = make_config()
+        cache = ImageCache(cfg, cache_dir=tmp_path / "cache")
+        path = await cache.download_to_temp("")
+        assert path == ""
+
+    @respx.mock
+    async def test_cache_download_sends_referer(self, tmp_path: Path):
+        """缓存路径的下载也必须携带 Referer 头。"""
+        cfg = make_config()
+        cache = ImageCache(cfg, cache_dir=tmp_path / "cache")
+        captured_headers = {}
+
+        def handler(request):
+            captured_headers.update(request.headers)
+            return httpx.Response(200, content=b"img")
+
+        item = {"pid": 9, "p": 0, "ext": "jpg", "urls": {"original": "https://i.pximg.net/9.jpg"}}
+        respx.get("https://i.pximg.net/9.jpg").mock(side_effect=handler)
+        await cache.get_local_path(item, "original")
+        assert captured_headers.get("referer") == "https://www.pixiv.net/"
+
+    @respx.mock
+    async def test_download_to_temp_ext_guess(self, tmp_path: Path):
+        """URL 无扩展名时默认 jpg，有扩展名时用对应扩展名。"""
+        cfg = make_config()
+        cache = ImageCache(cfg, cache_dir=tmp_path / "cache")
+
+        # 无扩展名
+        respx.get("https://x/noext").mock(return_value=httpx.Response(200, content=b"a"))
+        path = await cache.download_to_temp("https://x/noext")
+        assert Path(path).suffix == ".jpg"
+
+        # webp
+        respx.get("https://x/img.webp").mock(return_value=httpx.Response(200, content=b"b"))
+        path = await cache.download_to_temp("https://x/img.webp")
+        assert Path(path).suffix == ".webp"
